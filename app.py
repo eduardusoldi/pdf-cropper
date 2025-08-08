@@ -5,7 +5,7 @@ import tempfile
 
 def crop_pdf_to_jpg(pdf_file):
     doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
-    
+
     if len(doc) == 0:
         st.error("❌ PDF has no pages.")
         return None
@@ -17,23 +17,36 @@ def crop_pdf_to_jpg(pdf_file):
         st.warning("⚠️ No text blocks found.")
         return None
 
-    # Detect bounding box
-    x0 = min(b[0] for b in blocks)
-    y0 = min(b[1] for b in blocks)
-    x1 = max(b[2] for b in blocks)
-    y1 = max(b[3] for b in blocks)
-    crop_rect = fitz.Rect(x0, y0, x1, y1)
+    # Padding in points — adjust if needed
+    padding = 20
+
+    # Detect bounding box and apply padding
+    x0 = min(b[0] for b in blocks) - padding
+    y0 = min(b[1] for b in blocks) - padding
+    x1 = max(b[2] for b in blocks) + padding
+    y1 = max(b[3] for b in blocks) + padding
+
+    # Ensure crop box stays within page bounds
+    page_rect = page.rect
+    crop_rect = fitz.Rect(
+        max(x0, page_rect.x0),
+        max(y0, page_rect.y0),
+        min(x1, page_rect.x1),
+        min(y1, page_rect.y1),
+    )
 
     # Render image
     zoom = 2
     mat = fitz.Matrix(zoom, zoom)
     pix = page.get_pixmap(matrix=mat, clip=crop_rect, dpi=300)
 
-    # Save to temp JPG
+    # Save to temp JPG safely
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
-    pix.save(temp_file.name)
+    temp_file_path = temp_file.name
+    temp_file.close()
+    pix.save(temp_file_path)
 
-    return temp_file.name
+    return temp_file_path
 
 # === Streamlit UI ===
 
