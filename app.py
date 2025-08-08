@@ -1,67 +1,65 @@
 import streamlit as st
 import fitz  # PyMuPDF
-import os
+from PIL import Image
 import tempfile
+import numpy as np
+import cv2
 
-def crop_pdf_to_jpg(pdf_file):
+st.set_page_config(page_title="PDF Cropper", layout="centered")
+
+st.title("🖼️ PDF to Cropped JPG")
+st.write("Upload a **Shopee** or **Tokopedia** PDF, and it will auto-crop and convert it to JPG.")
+
+uploaded_file = st.file_uploader("📄 Upload PDF", type="pdf")
+
+def crop_tokopedia_pdf_to_jpg(pdf_file):
     doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
-
     if len(doc) == 0:
         st.error("❌ PDF has no pages.")
         return None
 
     page = doc[0]
-    blocks = page.get_text("blocks")
 
-    if not blocks:
-        st.warning("⚠️ No text blocks found.")
+    mat = fitz.Matrix(2, 2)
+    pix = page.get_pixmap(matrix=mat, dpi=300)
+
+    # Convert to numpy
+    img_np = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+    if pix.n == 4:
+        img_np = cv2.cvtColor(img_np, cv2.COLOR_RGBA2RGB)
+
+    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
+
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        st.warning("⚠️ No label detected.")
         return None
 
-    # Padding in points — adjust if needed
-    padding = 20
+    # Largest contour is likely the main label
+    c = max(contours, key=cv2.contourArea)
+    x, y, w, h = cv2.boundingRect(c)
 
-    # Detect bounding box and apply padding
-    x0 = min(b[0] for b in blocks) - padding
-    y0 = min(b[1] for b in blocks) - padding
-    x1 = max(b[2] for b in blocks) + padding
-    y1 = max(b[3] for b in blocks) + padding
+    padding = 10
+    x = max(x - padding, 0)
+    y = max(y - padding, 0)
+    w = min(w + 2 * padding, img_np.shape[1] - x)
+    h = min(h + 2 * padding, img_np.shape[0] - y)
 
-    # Ensure crop box stays within page bounds
-    page_rect = page.rect
-    crop_rect = fitz.Rect(
-        max(x0, page_rect.x0),
-        max(y0, page_rect.y0),
-        min(x1, page_rect.x1),
-        min(y1, page_rect.y1),
-    )
+    cropped = img_np[y:y + h, x:x + w]
+    cropped_pil = Image.fromarray(cropped)
 
-    # Render image
-    zoom = 2
-    mat = fitz.Matrix(zoom, zoom)
-    pix = page.get_pixmap(matrix=mat, clip=crop_rect, dpi=300)
-
-    # Save to temp JPG safely
+    # Save to file
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
     temp_file_path = temp_file.name
     temp_file.close()
-    pix.save(temp_file_path)
+    cropped_pil.save(temp_file_path)
 
     return temp_file_path
 
-# === Streamlit UI ===
-
-st.set_page_config(page_title="PDF Resi Cropper", page_icon="📄")
-st.title("📄 PDF Resi Cropper to JPG")
-st.write("Upload a **single-page PDF**, and this app will crop and convert it to a `.jpg` image based on the content area.")
-
-uploaded_file = st.file_uploader("Upload PDF", type="pdf")
-
-if uploaded_file:
-    with st.spinner("Processing..."):
-        output_path = crop_pdf_to_jpg(uploaded_file)
-
-    if output_path:
-        with open(output_path, "rb") as f:
-            st.success("✅ Done! Click below to download your cropped JPG.")
-            st.download_button("Download Cropped JPG", f, file_name="cropped.jpg", mime="image/jpeg")
-        os.unlink(output_path)  # Clean up temp file
+if uploaded_file is not None:
+    with st.spinner("🔄 Processing PDF..."):
+        output_path = crop_tokopedia_pdf_to_jpg(uploaded_file)
+        if output_path:
+            with open(output_path, "rb") as f:
+                st.download_button("⬇️ Download Cropped JPG", data=f, file_name="cropped.jpg", mime="image/jpeg")
